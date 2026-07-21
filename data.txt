@@ -1,0 +1,14 @@
+In AccessRightInfoDAOImpl.java, addShortDescSearchKeyWord(searchKeyWord, finalQuery) has a SQL injection bug: it concatenates searchKeyWord's raw value into the query via replaceAll() instead of binding it as a parameter.
+
+Fix:
+1. In addShortDescSearchKeyWord(): replace ":searchKeyWordOuter"/":searchKeyWordInner" with a single named bind placeholder (:shortDescKeyword) in both LIKE clauses. Don't insert searchKeyWord's value into the string. Keep the blank-searchKeyWord else-branch (placeholder removal) unchanged.
+
+2. Find every caller of addShortDescSearchKeyWord() in this class (fetchARsForProfile, fetchArCountForProfile, fetchArListForProfile, and any others). In each, after the Query/SQLQuery is built from the returned string and other setParameter calls are set, add:
+   if (StringUtils.isNotBlank(<searchKeyWord source>)) {
+       <queryObj>.setParameter("shortDescKeyword", "%" + <searchKeyWord source>.toLowerCase() + "%");
+   }
+   Match <queryObj> and <searchKeyWord source> to each method's actual variables.
+
+3. Only change how searchKeyWord reaches the query (bind vs concat) — keep LOWER(), wildcards, and all other logic identical.
+
+Show the updated addShortDescSearchKeyWord() and all touched caller methods, with a short diff summary confirming behavior is unchanged.
