@@ -1,0 +1,33 @@
+Finding Vulnerabilities in a Java Codebase with an LLM
+A practical approach for scanning a folder of Java source files
+ 
+
+When you point an LLM at an entire folder of Java files and ask it to find vulnerabilities, the natural instinct is to just paste everything into one big prompt and see what comes back. In practice that approach breaks down quickly — real Java projects blow past context limits, the cost adds up fast, and it works against the same token-conscious philosophy behind tools like CodeSentry. A more deliberate, staged approach works far better, and it mirrors how a human security reviewer would actually work through a codebase: don't read everything with the same intensity, narrow down to what matters, and go deep only where it counts.
+Start by Narrowing the Field, Not Reading Everything
+Rather than feeding the whole folder to the model in one go, the first step is to walk the directory tree and build a list of every .java file, then filter that list down to the files that are actually worth a security reviewer's attention. That means prioritizing controllers, DAOs and repositories, anything touching Statement or PreparedStatement, file I/O, deserialization logic, calls out to Runtime.exec, servlets, and authentication or session-handling code. Test files, generated code, and build output directories like target/ or build/ can be skipped entirely — they rarely contain the kind of exploitable logic a scan is looking for, and including them just burns tokens for no benefit.
+Send the Model One File — or One Method — at a Time
+Once the relevant files are identified, each one is sent to the LLM individually rather than batched together. If a file is unusually large, it's worth splitting it further, by method, so a single call stays within a reasonable size — roughly 300 to 500 lines is a sensible ceiling. It's important to still include the surrounding context even when only one method is being reviewed: the imports and the class signature matter, because whether a piece of code is vulnerable often depends on knowing what a variable is bound to or where a value originated from. Stripping that context out to save tokens tends to produce shallow, unreliable results.
+Ask a Narrow Question, Not “Find Bugs”
+A prompt like “find bugs in this file” tends to produce vague or hallucinated findings. It works much better to hand the model a specific checklist of Java vulnerability classes to look for, so its attention is focused and its output is more consistent and easier to trust:
+• SQL or JPQL injection — particularly Statement used instead of PreparedStatement, or queries built through string concatenation
+• Unsafe deserialization — ObjectInputStream and custom readObject implementations
+• XML External Entity (XXE) issues — DocumentBuilderFactory or SAXParserFactory instances that haven't had their features hardened
+• Command injection — Runtime.exec or ProcessBuilder calls built from unsanitized input
+• Path traversal — File or Paths.get constructed from user-supplied input
+• Hardcoded secrets and weak cryptography — DES, MD5, or ECB mode showing up in code
+• Broken access control — endpoints missing an @PreAuthorize annotation or an equivalent role check
+Make the Model Answer in a Fixed Structure
+Free-text explanations are hard to act on at scale, so the model should be asked to respond in a consistent structured format — essentially a small JSON object per finding, covering the file, the line number, the relevant CWE, the OWASP category it maps to, a severity and confidence rating, a plain explanation, and a suggested fix. Structuring the output this way means findings can be deduplicated, scored, and merged directly with whatever a deterministic scanner like Semgrep, Trivy, or Gitleaks has already turned up, so everything ends up living in the same pipeline rather than as a separate, disconnected result.
+Work in Two Passes Instead of One
+The most cost-effective pattern is to split the review into two distinct passes rather than trying to get a deep, fully-explained answer on the first attempt.
+Pass
+What it does
+Pass 1 — Wide & Cheap
+Scan every candidate file quickly, asking the model only to flag lines or methods that look worth a closer look. Minimal reasoning, low token cost, cast a wide net.
+Pass 2 — Narrow & Deep
+Take only the flagged candidates from Pass 1, and for each one send the full method plus surrounding context, asking for a complete explanation and a suggested fix.
+ 
+
+This two-pass structure keeps token spend roughly proportional to how much risk actually shows up in the codebase, rather than to how large the folder happens to be — a small, clean project costs almost nothing to review, while a large one only spends heavily on the parts of it that genuinely deserve the attention.
+Why This Is Worth Doing Alongside Deterministic Scanners
+Tools like Semgrep are excellent at catching known, pattern-based issues — but they have no sense of what a piece of code is actually trying to do. An LLM reviewing code with this kind of staged, structured approach can pick up on business-logic problems that pattern matching simply cannot see: broken authorization checks, insecure direct object references, and subtle trust boundary violations where the code is syntactically fine but logically unsafe. Used this way, the LLM isn't replacing the deterministic scanners — it's covering the blind spot they leave behind, while the two-pass, checklist-driven structure keeps that coverage affordable.
