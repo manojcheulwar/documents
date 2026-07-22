@@ -1,0 +1,117 @@
+CodeSentry
+
+Token-Efficient Source Code Security Scanner
+Approach to Vulnerability Detection
+
+ 
+Scan  ·  Score  ·  Enrich  ·  Report — in one self-contained pipeline
+
+1. Overview
+CodeSentry is a source code security scanner built around a simple principle: use deterministic, open-source tools to do the heavy lifting, and reserve large language model (LLM) calls for the narrow set of tasks where they add real value — triage, explanation, and narrative enrichment. This keeps scan cost predictable and avoids sending raw source code to any LLM.
+The system runs as an eight-stage automated pipeline, taking a project from raw upload (ZIP, local directory, or Git URL) through scanning, normalization, deterministic risk scoring, optional LLM enrichment, and a self-contained HTML report.
+#
+Stage
+What happens
+1
+Ingest
+Accepts a ZIP upload, local directory, or Git URL (https only, shallow clone).
+2
+Scan
+Runs Semgrep, Gitleaks, Trivy, and OSV-Scanner independently.
+3
+Normalize
+Maps every scanner's output into one common Finding schema, with CWE → OWASP Top 10 mapping.
+4
+Dedup
+Merges identical findings (same rule, file, and line) and counts occurrences.
+5
+Risk Score
+Computes a deterministic 0–100 score using exponential saturation.
+6
+Enrich
+Optional LLM pass adds plain-language narrative to pre-filtered findings only.
+7
+Render
+Produces a single self-contained HTML report (no external calls).
+8
+Persist
+Saves scan metadata and findings to SQLite or PostgreSQL for audit history.
+ 
+
+2. Safe Ingestion
+Before any scanning begins, CodeSentry applies a set of guardrails to the input source so that untrusted code cannot compromise the scanning host itself:
+• ZIP upload, local directory, or Git URL as input sources (CLI or REST API).
+• Git cloning restricted to https:// only, with --depth 1 shallow clone.
+• Path-traversal protection: rejects absolute paths, drive letters, and ".." segments.
+• Zip-bomb guard via a compression-ratio cap, plus per-file, total-extracted, and file-count size limits.
+• Executable and binary file extensions are blocked from ever reaching disk.
+• Noise directories are skipped automatically (.git, node_modules, venv, dist).
+• Upload validation covers file extension, non-empty content, and maximum size.
+3. Pluggable Security Scanners
+Each scanner runs independently, can be toggled on or off, and executes under a hard timeout with shell=False subprocess calls — no shell injection surface, no runaway processes.
+Scanner
+Purpose
+Semgrep
+Static Application Security Testing (SAST) — code-level vulnerability rules (SQL injection, XSS, command injection, etc.).
+Gitleaks
+Hardcoded secret and credential detection across code and history.
+Trivy
+Dependency vulnerabilities plus container and Infrastructure-as-Code (IaC) misconfigurations.
+OSV-Scanner
+Open-source dependency vulnerability database lookups (known CVEs).
+ 
+All four tools are auto-detected from the project's tools/ folder, so no manual PATH configuration is required.
+4. Normalization & Deterministic Risk Scoring
+Normalization
+• All scanner output is mapped into one common Finding schema.
+• CWE identifiers are mapped to OWASP Top 10 (2021) categories, A01–A10.
+• Severity, confidence, CVSS score, fixed-version data, and a snippet of 10 lines or fewer are extracted per finding.
+• Secrets are masked everywhere — raw values are never stored.
+• Identical findings (same rule, file, and line) are deduplicated and counted.
+Risk Scoring
+Risk is scored 0–100 using exponential saturation, so a single Critical finding dominates the score even against a large pile of Low-severity findings:
+• A single Critical finding floors the project score at 70.
+• A single High finding floors the project score at 50.
+• Per-finding score = severity base × CVSS boost, discounted by scanner confidence (High/Medium/Low).
+• Project score is a severity-weighted aggregation across all findings, and is designed to never quite reach 100.
+5. Optional LLM Enrichment
+The LLM never sees raw source code — only normalized findings with snippets of 10 lines or fewer. This is the core of the token-efficiency design:
+• Fix templates first: common vulnerability classes (SQLi, XSS, command injection, path traversal, hardcoded secrets, weak crypto, insecure deserialization, XXE) get free, zero-token deterministic guidance before any LLM call is made.
+• Grouping & batching: duplicate findings collapse to one representative plus a count; batching caps put a hard ceiling on LLM cost per scan.
+• Response caching: a disk cache keyed by finding ID and model means re-scans cost nothing.
+• Provider-agnostic: works with any OpenAI-compatible API (OpenAI, Azure OpenAI, Ollama, LM Studio, vLLM). Setting LLM_PROVIDER=none runs the pipeline fully offline.
+6. Reporting
+CodeSentry produces a single, self-contained HTML report: no CDN dependencies, no external network requests, and Jinja2 autoescaping so that scanned code cannot inject script into its own report. The report includes:
+• Title, project name, scan date/time, and detected technology stack
+• Executive summary with overall risk score and level badge
+• Severity stat tiles and a bar chart
+• OWASP Top 10 (2021) mapping chart
+• Sortable vulnerability table with per-finding detail, grouped by file
+• Dependency vulnerabilities with fixed versions
+• Secret findings, with values always masked
+• Container / IaC misconfigurations
+• A prioritized action plan and false-positive review notes
+• Appendix with per-scanner status and duration
+The report supports light and dark mode, is fully self-contained, and phones home to nothing.
+7. Interfaces, Background Jobs & Persistence
+Component
+Details
+CLI
+python cli.py path/to/project or python cli.py project.zip --output report.html — prints risk score, severity counts, and report path.
+REST API (FastAPI)
+GET /health · POST /scans/upload · POST /scans/path · GET /scans/{id} · GET /scans/{id}/report.
+Background Jobs (Celery)
+CELERY_TASK_ALWAYS_EAGER=true runs inline for development; set to false with a worker for async processing via Redis.
+Persistence (SQLAlchemy)
+Scan table stores status, risk score/level, and stats JSON; FindingRecord stores per-scan findings for audit, on SQLite or PostgreSQL.
+ 
+
+8. Security-First Design Principles
+• Scanned code is never executed — static analysis only.
+• Subprocess calls use argument lists only, with resolved executables and hard timeouts (no shell=True).
+• Secrets are masked everywhere: in findings, snippets, and database records.
+• Scanner-reported file paths are re-sanitized before rendering into the report.
+• Git cloning is restricted to https:// with --depth 1.
+• Jinja2 autoescaping ensures scanned code cannot inject script into the generated report.
+9. Summary
+CodeSentry's approach can be summarized as deterministic-first, LLM-second: every finding is discovered, normalized, deduplicated, and scored using open-source scanners and rule-based logic. The LLM is an optional layer used only to explain and prioritize findings that have already been identified deterministically — never to find vulnerabilities on its own, and never with access to raw source code. The result is a config-driven (.env), pluggable, auditable pipeline that produces a prioritized, self-contained security report at predictable and minimal token cost.
