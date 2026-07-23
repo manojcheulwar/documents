@@ -1,0 +1,42 @@
+GitHub Copilot doesn't expose separate "system" and "user" prompt fields like the raw API — but it has equivalent mechanisms. Here's how to map your two-pass prompts onto them:
+
+**1. System prompt → a custom chat mode file (best fit for your use case)**
+
+Create `.github/chatmodes/java-security-pass1.chatmode.md`:
+```markdown
+---
+description: Pass 1 - wide Java vulnerability triage
+tools: ['codebase']
+model: GPT-4.1
+---
+You are a Java security triage engine. You do NOT explain, fix, or elaborate.
+You ONLY output line numbers of code worth a deeper security review...
+[paste your Pass 1 system prompt here]
+```
+Create a second one, `java-security-pass2.chatmode.md`, with your Pass 2 system prompt. Switch between them using the mode dropdown at the top of the Copilot Chat panel.
+
+**2. Repo-wide persistent instructions (alternative/simpler)**
+
+If you don't want separate modes, put a condensed version of your checklist in `.github/copilot-instructions.md` at your repo root — Copilot automatically injects this into every chat/agent request in that workspace. Good for the vulnerability checklist itself; less good for the strict "JSON-only, no prose" Pass 1 behavior since that's meant to be temporary/task-specific, not always-on.
+
+**3. User prompt → a reusable prompt file**
+
+Create `.github/prompts/java-vuln-scan.prompt.md`:
+```markdown
+---
+mode: java-security-pass1
+---
+Review the following Java file(s) for POTENTIAL instances of these vulnerability
+classes ONLY:
+1. SQL/JPQL injection...
+[paste your Pass 1 user prompt template here]
+```
+Then in Copilot Chat, type `/java-vuln-scan` and it runs with the mode + prompt template pre-loaded — you just attach the files.
+
+**4. Practical setup steps**
+- In VS Code: `Ctrl+Shift+P` → **"Chat: Configure Chat Modes"** to create the `.chatmode.md` files
+- `Ctrl+Shift+P` → **"Chat: New Prompt File"** to create the `.prompt.md` files
+- Select your mode from the dropdown in the Copilot Chat panel before running `/java-vuln-scan`
+- For Pass 2, switch to the `java-security-pass2` mode and paste in the flagged candidate + surrounding code
+
+**One limitation to flag:** Copilot Chat isn't built for strict batch-JSON-output automation the way a direct API call is — it's an interactive chat surface. If you want the full two-pass pipeline to run unattended (batching files, parsing JSON, feeding Pass 1 output into Pass 2 automatically), that's better done by calling the OpenAI-compatible endpoint directly from a script, with Copilot Chat used more for ad hoc/manual review during coding rather than the automated pipeline itself.
