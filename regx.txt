@@ -1,0 +1,1 @@
+(Statement|createStatement)\s*\(\s*\)\s*\.\s*(execute|executeQuery|executeUpdate)\s*\(\s*[^)]*\+
